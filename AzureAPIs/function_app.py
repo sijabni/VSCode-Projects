@@ -7,6 +7,37 @@ import yfinance as yf
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
+def get_exhaustive_data(ticker):
+    """Fetches price and categorizes asset dynamically using yfinance and patterns."""
+    try:
+        # 1. Handle Cash Pattern (The 'XX' convention)
+        if re.search(r'[A-Z]{3}XX$', ticker.upper()):
+            return 1.0, "Cash & Liquidity"
+
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        current_price = info.get("currentPrice", info.get("navPrice", 0.0))
+        
+        # 2. Identify ETFs
+        if info.get("quoteType") == "ETF":
+            if "International" in info.get("longName", ""):
+                return current_price, "International Equity"
+            return current_price, "Equity ETFs"
+            
+        # 3. Dynamic Sector Mapping for Stocks
+        sector = info.get("sector")
+        if sector:
+            # Grouping Tech/Communication into "Growth" for your Barbell strategy
+            if sector in ["Technology", "Communication Services"]:
+                return current_price, "Growth/Tech"
+            return current_price, sector
+            
+        return current_price, "Other/Miscellaneous"
+    except Exception as e:
+        logging.error(f"Error fetching {ticker}: {str(e)}")
+        return 0.0, "Other"
+    
 def get_current_price(ticker):
     try:
         stock = yf.Ticker(ticker)
@@ -17,27 +48,6 @@ def get_current_price(ticker):
         logging.error(f"Error fetching price for {ticker}: {str(e)}")
         return 0.0
     
-def get_stock_data(ticker):
-    try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        
-        # Get price and sector
-        current_price = info.get("currentPrice", 0.0)
-        
-        # Categorization logic using yfinance info
-        sector = info.get("sector", "Other")
-        
-        # If it's an ETF, yfinance uses 'fundFamily' or doesn't have a 'sector'
-        if not info.get("sector") and info.get("quoteType") == "ETF":
-            sector = "ETF/Fund"
-            
-        logging.info(f"Fetched {ticker}: Price={current_price}, Category={sector}")
-        return current_price, sector
-    except Exception as e:
-        logging.error(f"Error fetching data for {ticker}: {str(e)}")
-        return 0.0, "Other"
-
 @app.route(route="get_portfolio", methods=["GET","POST","PUT","DELETE"])
 def get_assets(req: func.HttpRequest) -> func.HttpResponse:
     logging.info(f"Processing {req.method} request...") 
@@ -65,13 +75,13 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                 
                 portfolio_list = []
                 for row in rows:
-                    current_price = get_current_price(row.Ticker)
+                    current_price, category = get_exhaustive_data(row.Ticker)
                     bought_at = float(row.PurchasePrice) if row.PurchasePrice else 0.0
                     shares = float(row.Shares) if row.Shares else 0.0
                     
                     # Calculate performance
                     gain_loss = round((current_price - bought_at) * shares, 2)
-                    price, category = get_stock_data(row.Ticker)
+                    #--price, category = get_stock_data(row.Ticker)
 
                     portfolio_list.append({
                         "ticker": row.Ticker,
