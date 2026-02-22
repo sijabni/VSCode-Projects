@@ -67,7 +67,8 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                 shares = req_body.get("shares")
                 purchase_price = req_body.get("purchase_price")
                 purchase_date = req_body.get("purchase_date") # New Field
-
+                logging.info(f"Adding asset: {ticker}, Shares: {shares}, Price: {purchase_price}, Date: {purchase_date}")
+                
                 if not all([ticker, shares]):
                     return func.HttpResponse("Missing ticker or shares.", status_code=400)
                 
@@ -84,6 +85,7 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                 shares = req_body.get("shares")
                 purchase_price = req_body.get("purchase_price")
                 purchase_date = req_body.get("purchase_date") # New Field
+                logging.info(f"Updating asset: {ticker}, Shares: {shares}, Price: {purchase_price}, Date: {purchase_date}")
 
                 if not ticker:
                     return func.HttpResponse("Ticker required.", status_code=400)
