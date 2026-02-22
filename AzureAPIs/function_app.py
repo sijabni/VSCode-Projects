@@ -60,7 +60,7 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                     })
 
                 return func.HttpResponse(json.dumps(portfolio_list), mimetype="application/json", status_code=200)
-            
+             
             # -- HANDLE POST: Save New Date Field --
             elif req.method == "POST":
                 ticker = req_body.get("ticker")
@@ -68,7 +68,7 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                 purchase_price = req_body.get("purchase_price")
                 purchase_date = req_body.get("purchase_date") # New Field
                 logging.info(f"Adding asset: {ticker}, Shares: {shares}, Price: {purchase_price}, Date: {purchase_date}")
-                
+
                 if not all([ticker, shares]):
                     return func.HttpResponse("Missing ticker or shares.", status_code=400)
                 
