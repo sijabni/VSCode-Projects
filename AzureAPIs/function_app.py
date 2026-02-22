@@ -16,6 +16,27 @@ def get_current_price(ticker):
     except Exception as e:
         logging.error(f"Error fetching price for {ticker}: {str(e)}")
         return 0.0
+    
+def get_stock_data(ticker):
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        # Get price and sector
+        current_price = info.get("currentPrice", 0.0)
+        
+        # Categorization logic using yfinance info
+        sector = info.get("sector", "Other")
+        
+        # If it's an ETF, yfinance uses 'fundFamily' or doesn't have a 'sector'
+        if not info.get("sector") and info.get("quoteType") == "ETF":
+            sector = "ETF/Fund"
+            
+        logging.info(f"Fetched {ticker}: Price={current_price}, Category={sector}")
+        return current_price, sector
+    except Exception as e:
+        logging.error(f"Error fetching data for {ticker}: {str(e)}")
+        return 0.0, "Other"
 
 @app.route(route="get_portfolio", methods=["GET","POST","PUT","DELETE"])
 def get_assets(req: func.HttpRequest) -> func.HttpResponse:
@@ -50,15 +71,17 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                     
                     # Calculate performance
                     gain_loss = round((current_price - bought_at) * shares, 2)
-                    
+                    price, category = get_stock_data(row.Ticker)
+
                     portfolio_list.append({
                         "ticker": row.Ticker,
                         "shares": shares,
                         "price_bought": bought_at,
                         "date_added": str(row.PurchaseDate) if row.PurchaseDate else None,
-                        "gain_loss": gain_loss
+                        "gain_loss": gain_loss,
+                        "category": category  # <--- Send this to the frontend
                     })
-
+ 
                 return func.HttpResponse(json.dumps(portfolio_list), mimetype="application/json", status_code=200)
              
             # -- HANDLE POST: Save New Date Field --
