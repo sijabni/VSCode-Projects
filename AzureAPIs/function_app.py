@@ -98,7 +98,7 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                 portfolio_list = []
                 for row in rows:
                     current_price, category, trend_data = get_exhaustive_data(row.Ticker)
-                    logging
+                    logging.info(f"Fetched data for {row.Ticker} - Price: {current_price}, Category: {category}, Trend: {trend_data}")
                     bought_at = float(row.PurchasePrice) if row.PurchasePrice else 0.0
                     shares = float(row.Shares) if row.Shares else 0.0
                     
