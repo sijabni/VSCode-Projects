@@ -97,13 +97,12 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                 
                 portfolio_list = []
                 for row in rows:
-                    current_price, category = get_exhaustive_data(row.Ticker)
+                    current_price, category, trend_data = get_exhaustive_data(row.Ticker)
                     bought_at = float(row.PurchasePrice) if row.PurchasePrice else 0.0
                     shares = float(row.Shares) if row.Shares else 0.0
                     
                     # Calculate performance
                     gain_loss = round((current_price - bought_at) * shares, 2)
-                    #--price, category = get_stock_data(row.Ticker)
 
                     portfolio_list.append({
                         "ticker": row.Ticker,
@@ -111,7 +110,8 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                         "price_bought": bought_at,
                         "date_added": str(row.PurchaseDate) if row.PurchaseDate else None,
                         "gain_loss": gain_loss,
-                        "category": category  # <--- Send this to the frontend
+                        "category": category,  
+                        "trend_data": trend_data    # <--- Send this to the frontend
                     })
  
                 return func.HttpResponse(json.dumps(portfolio_list), mimetype="application/json", status_code=200)
