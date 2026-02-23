@@ -133,7 +133,8 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                     logging.info(f"Fetched data for {row.Ticker} - Price: {current_price}, Category: {category}, Trend: {trend_data}")
                     bought_at = float(row.PurchasePrice) if row.PurchasePrice else 0.0
                     shares = float(row.Shares) if row.Shares else 0.0
-                    
+                    current_price = float(current_price)
+
                     # Calculate performance
                     gain_loss = round((current_price - bought_at) * shares, 2)
 
@@ -161,9 +162,10 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                     return func.HttpResponse("Invalid ticker or shares.", status_code=400)
                 # --- QA FIX: Fetch live data so the cache isn't empty on day one ---
                 try:
-                    _, _, trend_data = get_exhaustive_data(ticker)
+                    current_price, category, trend_data = get_exhaustive_data(ticker)
                 except Exception as e:
                     logging.error(f"Cache priming failed: {e}")
+                    category = "Other/Miscellaneous"
                     trend_data = []
 
                 cursor.execute(
