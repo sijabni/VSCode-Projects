@@ -53,7 +53,6 @@ def get_exhaustive_data(ticker):
                 else:
                     category = sector
 
-
         # THE FIX: Always return all three values
         return current_price, category, trend_data
     
