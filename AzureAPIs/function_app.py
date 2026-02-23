@@ -25,7 +25,7 @@ def get_cached_or_live_data(ticker, cursor):
     if row and row.LastUpdated:
         time_diff = datetime.datetime.now() - row.LastUpdated
         if time_diff.total_seconds() < 21600:  # 6 hours
-            return row.PurchasePrice, row.category, json.loads(row.CachedTrend)
+            return row.PurchasePrice, json.loads(row.CachedTrend)
 
     # 2. If no cache or stale, fetch live
     price, cat, trend = get_exhaustive_data(ticker)
@@ -33,7 +33,7 @@ def get_cached_or_live_data(ticker, cursor):
     # 3. Update the cache in the background
     cursor.execute("""
         UPDATE Portfolio 
-        SET LastUpdated = ?, CachedTrend = ? 
+        SET LastUpdated = ?, CachedTrend = ? , category = ?
         WHERE Ticker = ?
     """, (datetime.datetime.now(), json.dumps(trend), ticker))
     
@@ -123,7 +123,7 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
             
             # -- HANDLE GET: Retrieve Date and Price --
             if req.method == "GET":
-                cursor.execute("SELECT Ticker, Shares, PurchasePrice, PurchaseDate FROM Portfolio")
+                cursor.execute("SELECT Ticker, Shares, category, PurchasePrice, PurchaseDate FROM Portfolio")
                 rows = cursor.fetchall()
                 
                 portfolio_list = []
