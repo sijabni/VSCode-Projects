@@ -4,6 +4,7 @@ import azure.functions as func
 import json
 import pyodbc
 import yfinance as yf
+import re
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
