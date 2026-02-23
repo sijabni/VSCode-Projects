@@ -5,8 +5,39 @@ import json
 import pyodbc
 import yfinance as yf
 import re
+import datetime
+
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+import datetime
+import json
+
+def get_cached_or_live_data(ticker, cursor):
+    # 1. Check if we have fresh data in the DB
+    cursor.execute("""
+        SELECT TOP 1 PurchasePrice, category, CachedTrend, LastUpdated 
+        FROM Portfolio WHERE Ticker = ?
+    """, (ticker,))
+    row = cursor.fetchone()
+
+    # If data is less than 6 hours old, return it immediately
+    if row and row.LastUpdated:
+        time_diff = datetime.datetime.now() - row.LastUpdated
+        if time_diff.total_seconds() < 21600:  # 6 hours
+            return row.PurchasePrice, row.category, json.loads(row.CachedTrend)
+
+    # 2. If no cache or stale, fetch live
+    price, cat, trend = get_exhaustive_data(ticker)
+
+    # 3. Update the cache in the background
+    cursor.execute("""
+        UPDATE Portfolio 
+        SET LastUpdated = ?, CachedTrend = ? 
+        WHERE Ticker = ?
+    """, (datetime.datetime.now(), json.dumps(trend), ticker))
+    
+    return price, cat, trend
 
 def get_exhaustive_data(ticker):
     """Fetches price and categorizes asset dynamically using yfinance and patterns."""
@@ -97,7 +128,8 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                 
                 portfolio_list = []
                 for row in rows:
-                    current_price, category, trend_data = get_exhaustive_data(row.Ticker)
+                    # -- current_price, category, trend_data = get_exhaustive_data(row.Ticker)
+                    current_price, category, trend_data = get_cached_or_live_data(row.Ticker, cursor)
                     logging.info(f"Fetched data for {row.Ticker} - Price: {current_price}, Category: {category}, Trend: {trend_data}")
                     bought_at = float(row.PurchasePrice) if row.PurchasePrice else 0.0
                     shares = float(row.Shares) if row.Shares else 0.0
@@ -127,10 +159,16 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
 
                 if not all([ticker, shares]):
                     return func.HttpResponse("Missing ticker or shares.", status_code=400)
-                
+                # --- QA FIX: Fetch live data so the cache isn't empty on day one ---
+                try:
+                    current_price, category, trend_data = get_exhaustive_data(ticker)
+                except Exception as e:
+                    logging.error(f"Failed to prime cache for {ticker}: {e}")
+                    trend_data = [] # Fallback
+
                 cursor.execute(
-                    "INSERT INTO Portfolio (Ticker, Shares, PurchasePrice, PurchaseDate) VALUES (?, ?, ?, ?)",
-                    (ticker, shares, purchase_price, purchase_date)
+                    "INSERT INTO Portfolio (Ticker, Shares, PurchasePrice, PurchaseDate, LastUpdated, CachedTrend) VALUES (?, ?, ?, ?, ?, ?)",
+                    (ticker, shares, purchase_price, purchase_date, datetime.datetime.now(), json.dumps(trend_data))
                 )
                 conn.commit()
                 return func.HttpResponse("Asset added successfully.", status_code=201)
