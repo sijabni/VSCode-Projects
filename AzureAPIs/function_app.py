@@ -49,9 +49,10 @@ def get_exhaustive_data(ticker):
             sector = info.get("sector")
             if sector:
                 if sector in ["Technology", "Communication Services"]:
-                    category = "Growth/Tech"
+                    category = "Growth/Tech" 
                 else:
                     category = sector
+
 
         # THE FIX: Always return all three values
         return current_price, category, trend_data
