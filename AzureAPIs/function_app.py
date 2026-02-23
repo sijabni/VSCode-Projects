@@ -9,18 +9,27 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 def get_exhaustive_data(ticker):
     """Fetches price and categorizes asset dynamically using yfinance and patterns."""
+    ticker_upper = ticker.upper()
     try:
         # 1. Handle Cash Pattern (The 'XX' convention)
+        
         if re.search(r'[A-Z]{3}XX$', ticker.upper()):
             return 1.0, "Cash & Liquidity"
 
+        # List of Tickers that are Cash-Equivalents but don't end in XX
+        cash_equivalents = ['BIL', 'SGOV', 'CLIP', 'SHV', 'VGSH']
+        is_cash_etf = ticker_upper in cash_equivalents
         stock = yf.Ticker(ticker)
         info = stock.info
         
         current_price = info.get("currentPrice", info.get("navPrice", 0.0))
         
-        # 2. Identify ETFs
+        # 2. Identify ETFs (Including Cash ETFs)
+        # Force "Cash & Liquidity" if it's in our exception list
         if info.get("quoteType") == "ETF":
+            if is_cash_etf:
+                return current_price, "Cash & Liquidity"
+            
             if "International" in info.get("longName", ""):
                 return current_price, "International Equity"
             return current_price, "Equity ETFs"
