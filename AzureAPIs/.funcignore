@@ -6,3 +6,10 @@ __queuestorage__
 local.settings.json
 test
 .venv
+# newly-added to deploy faster (allegedly)
+__pycache__
+*.pyc
+.python_version
+.env
+.pytest_cache
+requirements.txt.user
