@@ -11,48 +11,54 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 def get_exhaustive_data(ticker):
     """Fetches price and categorizes asset dynamically using yfinance and patterns."""
     ticker_upper = ticker.upper()
+    current_price = 0.0
+    category = "Other/Miscellaneous"
+    trend_data = []
+
     try:
         # 1. Handle Cash Pattern (The 'XX' convention)
-        
-        if re.search(r'[A-Z]{3}XX$', ticker.upper()):
-            return 1.0, "Cash & Liquidity"
+        if re.search(r'[A-Z]{3}XX$', ticker_upper):
+            # Cash usually doesn't need a trendline, but we return a flat one [1,1,1,1,1,1,1] 
+            # so the frontend doesn't crash
+            return 1.0, "Cash & Liquidity", [1.0] * 7
 
-        # List of Tickers that are Cash-Equivalents but don't end in XX
-        cash_equivalents = ['BIL', 'SGOV', 'CLIP', 'SHV', 'VGSH']
-        is_cash_etf = ticker_upper in cash_equivalents
         stock = yf.Ticker(ticker)
         info = stock.info
-        # Pull 7 days of historical data at daily intervals
-        hist = stock.history(period="7d", interval="1d")
-        # Extract the closing prices as a list of floats
-        # We use .tolist() to make it JSON serializable
-        trend_data = hist['Close'].tolist() if not hist.empty else []
-
-        current_price = info.get("currentPrice", info.get("navPrice", 0.0))
         
-        # 2. Identify ETFs (Including Cash ETFs)
-        # Force "Cash & Liquidity" if it's in our exception list
+        # 2. Fetch Trend Data (7 days)
+        hist = stock.history(period="7d", interval="1d")
+        trend_data = hist['Close'].fillna(0).tolist() if not hist.empty else []
+
+        # 3. Determine Price
+        current_price = info.get("currentPrice", info.get("navPrice", 0.0))
+        if current_price == 0 and trend_data:
+            current_price = trend_data[-1]
+
+        # 4. Categorization Logic
+        cash_equivalents = ['BIL', 'SGOV', 'CLIP', 'SHV', 'VGSH']
+        is_cash_etf = ticker_upper in cash_equivalents
+        
         if info.get("quoteType") == "ETF":
             if is_cash_etf:
-                return current_price, "Cash & Liquidity"
-            
-            if "International" in info.get("longName", ""):
-                return current_price, "International Equity"
-            return current_price, "Equity ETFs"
-            
-        # 3. Dynamic Sector Mapping for Stocks
-        sector = info.get("sector")
-        if sector:
-            # Grouping Tech/Communication into "Growth" for your Barbell strategy
-            if sector in ["Technology", "Communication Services"]:
-                return current_price, "Growth/Tech"
-            return current_price, sector
-            
-        return current_price, "Other/Miscellaneous", trend_data
+                category = "Cash & Liquidity"
+            elif "International" in info.get("longName", ""):
+                category = "International Equity"
+            else:
+                category = "Equity ETFs"
+        else:
+            sector = info.get("sector")
+            if sector:
+                if sector in ["Technology", "Communication Services"]:
+                    category = "Growth/Tech"
+                else:
+                    category = sector
+
+        # THE FIX: Always return all three values
+        return current_price, category, trend_data
     
     except Exception as e:
         logging.error(f"Error fetching {ticker}: {str(e)}")
-        return 0.0, "Other"
+        return 0.0, "Other", []
     
 def get_current_price(ticker):
     try:
