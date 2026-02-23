@@ -25,7 +25,7 @@ def get_cached_or_live_data(ticker, cursor):
     if row and row.LastUpdated:
         time_diff = datetime.datetime.now() - row.LastUpdated
         if time_diff.total_seconds() < 21600:  # 6 hours
-            return row.PurchasePrice, json.loads(row.CachedTrend)
+            return row.PurchasePrice, row.category, json.loads(row.CachedTrend)
 
     # 2. If no cache or stale, fetch live
     price, cat, trend = get_exhaustive_data(ticker)
@@ -35,7 +35,7 @@ def get_cached_or_live_data(ticker, cursor):
         UPDATE Portfolio 
         SET LastUpdated = ?, CachedTrend = ? , category = ?
         WHERE Ticker = ?
-    """, (datetime.datetime.now(), json.dumps(trend), ticker))
+    """, (datetime.datetime.now(), json.dumps(trend), cat, ticker))
     
     return price, cat, trend
 
@@ -167,8 +167,8 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                     trend_data = []
 
                 cursor.execute(
-                    "INSERT INTO Portfolio (Ticker, Shares, PurchasePrice, PurchaseDate, LastUpdated, CachedTrend) VALUES (?, ?, ?, ?, ?, ?)",
-                    (ticker, shares, purchase_price, purchase_date, datetime.datetime.now(), json.dumps(trend_data))
+                    "INSERT INTO Portfolio (Ticker, Shares, PurchasePrice, PurchaseDate, LastUpdated, CachedTrend, category) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (ticker, shares, purchase_price, purchase_date, datetime.datetime.now(), json.dumps(trend_data), category)
                 )
                 conn.commit()
                 return func.HttpResponse("Asset added successfully.", status_code=201)
