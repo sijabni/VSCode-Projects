@@ -22,7 +22,12 @@ def get_exhaustive_data(ticker):
         is_cash_etf = ticker_upper in cash_equivalents
         stock = yf.Ticker(ticker)
         info = stock.info
-        
+        # Pull 7 days of historical data at daily intervals
+        hist = stock.history(period="7d", interval="1d")
+        # Extract the closing prices as a list of floats
+        # We use .tolist() to make it JSON serializable
+        trend_data = hist['Close'].tolist() if not hist.empty else []
+
         current_price = info.get("currentPrice", info.get("navPrice", 0.0))
         
         # 2. Identify ETFs (Including Cash ETFs)
@@ -43,7 +48,8 @@ def get_exhaustive_data(ticker):
                 return current_price, "Growth/Tech"
             return current_price, sector
             
-        return current_price, "Other/Miscellaneous"
+        return current_price, "Other/Miscellaneous", trend_data
+    
     except Exception as e:
         logging.error(f"Error fetching {ticker}: {str(e)}")
         return 0.0, "Other"
