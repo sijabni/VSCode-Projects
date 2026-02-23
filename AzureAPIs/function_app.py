@@ -151,20 +151,20 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
              
             # -- HANDLE POST: Save New Date Field --
             elif req.method == "POST":
-                ticker = req_body.get("ticker")
-                shares = req_body.get("shares")
-                purchase_price = req_body.get("purchase_price")
+                ticker = req_body.get("ticker").upper()
+                shares = float(req_body.get("shares") or 0)
+                purchase_price = float(req_body.get("purchase_price") or 0)
                 purchase_date = req_body.get("purchase_date") # New Field
                 logging.info(f"Adding asset: {ticker}, Shares: {shares}, Price: {purchase_price}, Date: {purchase_date}")
 
-                if not all([ticker, shares]):
-                    return func.HttpResponse("Missing ticker or shares.", status_code=400)
+                if not ticker or shares <= 0:
+                    return func.HttpResponse("Invalid ticker or shares.", status_code=400)
                 # --- QA FIX: Fetch live data so the cache isn't empty on day one ---
                 try:
-                    current_price, category, trend_data = get_exhaustive_data(ticker)
+                    _, _, trend_data = get_exhaustive_data(ticker)
                 except Exception as e:
-                    logging.error(f"Failed to prime cache for {ticker}: {e}")
-                    trend_data = [] # Fallback
+                    logging.error(f"Cache priming failed: {e}")
+                    trend_data = []
 
                 cursor.execute(
                     "INSERT INTO Portfolio (Ticker, Shares, PurchasePrice, PurchaseDate, LastUpdated, CachedTrend) VALUES (?, ?, ?, ?, ?, ?)",
