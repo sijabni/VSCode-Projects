@@ -86,7 +86,7 @@ def get_cached_or_live_data(ticker, cursor):
         UPDATE Portfolio 
         SET LastUpdated = ?, CachedTrend = ? , category = ? , CurrentPrice = ?
         WHERE Ticker = ?
-    """, (datetime.datetime.now(), json.dumps(trend), cat, float(price)ticker))
+    """, (datetime.datetime.now(), json.dumps(trend), cat, float(price), ticker))
     
     return price, cat, trend
 
