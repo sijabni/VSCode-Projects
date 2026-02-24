@@ -33,6 +33,7 @@ def process_fidelity_csv(file_content, cursor, conn):
         # We save 'Cost Basis Per Share' as our PurchasePrice.
         cost_basis = row.get('Cost Basis Per Share', '0').replace('$', '').replace(',', '')
         purchase_price = float(cost_basis) if cost_basis != 'n/a' else 0.0
+        logging.info(f"Processing {ticker} - Shares: {shares}, Purchase Price: {purchase_price}")
         
         # Perform the UPSERT (Check if ticker exists)
         cursor.execute("SELECT Ticker FROM Portfolio WHERE Ticker = ?", (ticker,))
@@ -207,7 +208,7 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                     file_content = file.stream.read()
                     num_processed = process_fidelity_csv(file_content, cursor, conn)
                     logging.info(f"Processed {num_processed} assets from uploaded file.")
-                    
+
 
                     return func.HttpResponse(f"Success: Processed {num_processed} assets.", status_code=200)
                 except Exception as e:
