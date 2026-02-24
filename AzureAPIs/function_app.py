@@ -197,6 +197,7 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
             elif req.method == "POST" and req.params.get("action") == "upload":
                 try:
                     # Get the file from the request
+                    logging.info("Processing file upload...")
                     file = req.files.get('file')
                     if not file:
                         return func.HttpResponse("No file uploaded.", status_code=400)
