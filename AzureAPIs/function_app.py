@@ -49,7 +49,7 @@ def process_fidelity_csv(file_content, cursor, conn):
                     UPDATE Portfolio 
                     SET Shares = ?, PurchasePrice = ?, CurrentPrice = ?, LastUpdated = NULL 
                     WHERE Ticker = ?
-                """, (shares, purchase_price, csv_market_price ticker))
+                """, (shares, purchase_price, csv_market_price, ticker))
             else:
                 cursor.execute("""
                     INSERT INTO Portfolio (Ticker, Shares, PurchasePrice, CurrentPrice, LastUpdated) 
