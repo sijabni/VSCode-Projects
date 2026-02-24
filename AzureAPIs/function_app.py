@@ -34,7 +34,7 @@ def process_fidelity_csv(file_content, cursor, conn):
         cost_basis = row.get('Cost Basis Per Share', '0').replace('$', '').replace(',', '')
         purchase_price = float(cost_basis) if cost_basis != 'n/a' else 0.0
         logging.info(f"Processing {ticker} - Shares: {shares}, Purchase Price: {purchase_price}")
-        
+
         # Perform the UPSERT (Check if ticker exists)
         cursor.execute("SELECT Ticker FROM Portfolio WHERE Ticker = ?", (ticker,))
         exists = cursor.fetchone()
@@ -206,6 +206,8 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                     logging.info(f"Received file: {file.filename}, Size: {len(file.stream.read())} bytes")
                     file.stream.seek(0)  # Reset stream position after reading for logging
                     file_content = file.stream.read()
+                    logging.info(f"File content read successfully, size: {len(file_content)} bytes")
+                    
                     num_processed = process_fidelity_csv(file_content, cursor, conn)
                     logging.info(f"Processed {num_processed} assets from uploaded file.")
 
