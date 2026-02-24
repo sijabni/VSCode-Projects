@@ -6,12 +6,54 @@ import pyodbc
 import yfinance as yf
 import re
 import datetime
-
+import csv
+import io
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 import datetime
 import json
+
+def process_fidelity_csv(file_content, cursor, conn):
+    # Convert bytes to string buffer
+    stream = io.StringIO(file_content.decode('utf-8'))
+    reader = csv.DictReader(stream)
+    
+    count = 0
+    for row in reader:
+        ticker = row.get('Symbol', '').strip().upper()
+        
+        # QA Filter: Skip empty rows or the 'Total' footer row
+        if not ticker or ticker == 'TOTAL' or 'Pending' in ticker:
+            continue
+            
+        # Map Fidelity Columns to your DB Columns
+        shares = float(row.get('Quantity', 0))
+        # Fidelity uses 'Last Price' for current, but we want our own engine to fetch that.
+        # We save 'Cost Basis Per Share' as our PurchasePrice.
+        cost_basis = row.get('Cost Basis Per Share', '0').replace('$', '').replace(',', '')
+        purchase_price = float(cost_basis) if cost_basis != 'n/a' else 0.0
+        
+        # Perform the UPSERT (Check if ticker exists)
+        cursor.execute("SELECT Ticker FROM Portfolio WHERE Ticker = ?", (ticker,))
+        exists = cursor.fetchone()
+        
+        if exists:
+            cursor.execute("""
+                UPDATE Portfolio 
+                SET Shares = ?, PurchasePrice = ?, LastUpdated = NULL 
+                WHERE Ticker = ?
+            """, (shares, purchase_price, ticker))
+        else:
+            cursor.execute("""
+                INSERT INTO Portfolio (Ticker, Shares, PurchasePrice, LastUpdated) 
+                VALUES (?, ?, ?, NULL)
+            """, (ticker, shares, purchase_price))
+        
+        count += 1
+    
+    conn.commit()
+    return count
 
 def get_cached_or_live_data(ticker, cursor):
     # 1. Check if we have fresh data in the DB
@@ -151,6 +193,21 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                 return func.HttpResponse(json.dumps(portfolio_list), mimetype="application/json", status_code=200)
              
             # -- HANDLE POST: Save New Date Field --
+            
+            elif req.method == "POST" and req.params.get("action") == "upload":
+                try:
+                    # Get the file from the request
+                    file = req.files.get('file')
+                    if not file:
+                        return func.HttpResponse("No file uploaded.", status_code=400)
+                        
+                    file_content = file.stream.read()
+                    num_processed = process_fidelity_csv(file_content, cursor, conn)
+                    
+                    return func.HttpResponse(f"Success: Processed {num_processed} assets.", status_code=200)
+                except Exception as e:
+                    return func.HttpResponse(f"Parsing Error: {str(e)}", status_code=500)
+            
             elif req.method == "POST":
                 ticker = req_body.get("ticker").upper()
                 shares = float(req_body.get("shares") or 0)
@@ -204,6 +261,8 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                 cursor.execute("DELETE FROM Portfolio WHERE Ticker = ?", (ticker,))
                 conn.commit()
                 return func.HttpResponse("Asset deleted.", status_code=200)
+            
+            
 
     except Exception as e:
         logging.error(f"Database error: {str(e)}")
