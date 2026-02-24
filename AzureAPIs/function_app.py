@@ -197,14 +197,18 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
             elif req.method == "POST" and req.params.get("action") == "upload":
                 try:
                     # Get the file from the request
-                    logging.info("Processing file upload...")
+                    logging.info("Processing file upload...yomama")
                     file = req.files.get('file')
                     if not file:
                         return func.HttpResponse("No file uploaded.", status_code=400)
-                        
+                    
+                    logging.info(f"Received file: {file.filename}, Size: {len(file.stream.read())} bytes")
+                    file.stream.seek(0)  # Reset stream position after reading for logging
                     file_content = file.stream.read()
                     num_processed = process_fidelity_csv(file_content, cursor, conn)
+                    logging.info(f"Processed {num_processed} assets from uploaded file.")
                     
+
                     return func.HttpResponse(f"Success: Processed {num_processed} assets.", status_code=200)
                 except Exception as e:
                     return func.HttpResponse(f"Parsing Error: {str(e)}", status_code=500)
