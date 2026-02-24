@@ -82,7 +82,7 @@ def get_cached_or_live_data(ticker, cursor):
     # 3. Update the cache in the background
     cursor.execute("""
         UPDATE Portfolio 
-        SET LastUpdated = ?, CachedTrend = ? , category = ?
+        SET LastUpdated = ?, CachedTrend = ? , category = ? , CurrentPrice = ?
         WHERE Ticker = ?
     """, (datetime.datetime.now(), json.dumps(trend), cat, ticker))
     
@@ -186,6 +186,7 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
 
                     # Calculate performance
                     gain_loss = round((current_price - bought_at) * shares, 2)
+                    logging.info(f"{row.Ticker} - Bought at: {bought_at}, Current: {current_price}, Shares: {shares}, Gain/Loss: {gain_loss}")
 
                     portfolio_list.append({
                         "ticker": row.Ticker,
