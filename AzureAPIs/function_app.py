@@ -37,7 +37,9 @@ def process_fidelity_csv(file_content, cursor, conn):
             raw_cost = row.get('Average Cost Basis', '0').replace('$', '').replace(',', '').strip()
             purchase_price = float(raw_cost) if raw_cost and raw_cost != '--' and raw_cost != 'n/a' else 0.0
             logging.info(f"Processing {ticker} - Shares: {shares}, Purchase Price: {purchase_price}")
-
+            raw_last_price = row.get('Last Price', '0').replace('$', '').replace(',', '').strip()
+            csv_market_price = float(raw_last_price) if raw_last_price and raw_last_price != '--' else 0.0
+            
             # Perform the UPSERT (Check if ticker exists)
             cursor.execute("SELECT Ticker FROM Portfolio WHERE Ticker = ?", (ticker,))
             exists = cursor.fetchone()
@@ -45,14 +47,14 @@ def process_fidelity_csv(file_content, cursor, conn):
             if exists:
                 cursor.execute("""
                     UPDATE Portfolio 
-                    SET Shares = ?, PurchasePrice = ?, LastUpdated = NULL 
+                    SET Shares = ?, PurchasePrice = ?, CurrentPrice = ?, LastUpdated = NULL 
                     WHERE Ticker = ?
-                """, (shares, purchase_price, ticker))
+                """, (shares, purchase_price, csv_market_price ticker))
             else:
                 cursor.execute("""
-                    INSERT INTO Portfolio (Ticker, Shares, PurchasePrice, LastUpdated) 
-                    VALUES (?, ?, ?, NULL)
-                """, (ticker, shares, purchase_price))
+                    INSERT INTO Portfolio (Ticker, Shares, PurchasePrice, CurrentPrice, LastUpdated) 
+                    VALUES (?, ?, ?, ?, NULL)
+                """, (ticker, shares, purchase_price, csv_market_price))
             
             count += 1
         except Exception as e:
@@ -74,7 +76,7 @@ def get_cached_or_live_data(ticker, cursor):
     if row and row.LastUpdated:
         time_diff = datetime.datetime.now() - row.LastUpdated
         if time_diff.total_seconds() < 21600:  # 6 hours
-            return row.PurchasePrice, row.category, json.loads(row.CachedTrend)
+            return row.CurrentPrice or 0.0, row.category, json.loads(row.CachedTrend)
 
     # 2. If no cache or stale, fetch live
     price, cat, trend = get_exhaustive_data(ticker)
@@ -84,7 +86,7 @@ def get_cached_or_live_data(ticker, cursor):
         UPDATE Portfolio 
         SET LastUpdated = ?, CachedTrend = ? , category = ? , CurrentPrice = ?
         WHERE Ticker = ?
-    """, (datetime.datetime.now(), json.dumps(trend), cat, ticker))
+    """, (datetime.datetime.now(), json.dumps(trend), cat, float(price)ticker))
     
     return price, cat, trend
 
@@ -177,27 +179,36 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                 
                 portfolio_list = []
                 for row in rows:
+                    db_ticker = str(row.Ticker).replace('$', '').replace('*', '').strip().upper()
+                    # 2. MAP TO MARKET SYMBOL: yfinance needs 'BRK-B' for Berkshire
+                    market_ticker = "BRK-B" if db_ticker == "BRKB" else db_ticker
                     # -- current_price, category, trend_data = get_exhaustive_data(row.Ticker)
-                    current_price, category, trend_data = get_cached_or_live_data(row.Ticker, cursor)
-                    logging.info(f"Fetched data for {row.Ticker} - Price: {current_price}, Category: {category}, Trend: {trend_data}")
-                    bought_at = float(row.PurchasePrice) if row.PurchasePrice else 0.0
-                    shares = float(row.Shares) if row.Shares else 0.0
-                    current_price = float(current_price)
+                    
+                    try:
+                        current_price, category, trend_data = get_cached_or_live_data(row.Ticker, cursor)
+                        logging.info(f"Fetched data for {row.Ticker} - Price: {current_price}, Category: {category}, Trend: {trend_data}")
+                        bought_at = float(row.PurchasePrice) if row.PurchasePrice else 0.0
+                        shares = float(row.Shares) if row.Shares else 0.0
+                        curr_p = float(current_price) if current_price else 0.0
 
-                    # Calculate performance
-                    gain_loss = round((current_price - bought_at) * shares, 2)
-                    logging.info(f"{row.Ticker} - Bought at: {bought_at}, Current: {current_price}, Shares: {shares}, Gain/Loss: {gain_loss}")
+                        # Calculate performance
+                        gain_loss = round((curr_p - bought_at) * shares, 2)
+                        logging.info(f"{row.Ticker} - Bought at: {bought_at}, Current: {curr_p}, Shares: {shares}, Gain/Loss: {gain_loss}")
 
-                    portfolio_list.append({
-                        "ticker": row.Ticker,
-                        "shares": shares,
-                        "price_bought": bought_at,
-                        "date_added": str(row.PurchaseDate) if row.PurchaseDate else None,
-                        "gain_loss": gain_loss,
-                        "category": category,  
-                        "trend_data": trend_data    # <--- Send this to the frontend
-                    })
- 
+                        portfolio_list.append({
+                            "ticker": row.Ticker,
+                            "shares": shares,
+                            "price_bought": bought_at,
+                            "date_added": str(row.PurchaseDate) if row.PurchaseDate else None,
+                            "gain_loss": gain_loss,
+                            "category": category,  
+                            "trend_data": trend_data    # <--- Send this to the frontend
+                        })
+                    except Exception as e:
+                        # If one ticker fails (e.g. delisted stock), don't crash the whole dashboard
+                        logging.error(f"Error processing {db_ticker}: {e}")
+                        continue
+
                 return func.HttpResponse(json.dumps(portfolio_list), mimetype="application/json", status_code=200)
              
             # -- HANDLE POST: Save New Date Field --
