@@ -16,43 +16,49 @@ import json
 
 def process_fidelity_csv(file_content, cursor, conn):
     # Convert bytes to string buffer
-    stream = io.StringIO(file_content.decode('utf-8'))
+    stream = io.StringIO(file_content.decode('utf-8-sig'))  # Handle potential BOM
     reader = csv.DictReader(stream)
-    
+
     count = 0
     for row in reader:
+        raw_ticker = row.get('Symbol', '')
         ticker = row.get('Symbol', '').strip().upper()
-        
+        logging.info(f"Processing ticker: {ticker}")
         # QA Filter: Skip empty rows or the 'Total' footer row
         if not ticker or ticker == 'TOTAL' or 'Pending' in ticker:
             continue
-            
-        # Map Fidelity Columns to your DB Columns
-        shares = float(row.get('Quantity', 0))
-        # Fidelity uses 'Last Price' for current, but we want our own engine to fetch that.
-        # We save 'Cost Basis Per Share' as our PurchasePrice.
-        cost_basis = row.get('Cost Basis Per Share', '0').replace('$', '').replace(',', '')
-        purchase_price = float(cost_basis) if cost_basis != 'n/a' else 0.0
-        logging.info(f"Processing {ticker} - Shares: {shares}, Purchase Price: {purchase_price}")
 
-        # Perform the UPSERT (Check if ticker exists)
-        cursor.execute("SELECT Ticker FROM Portfolio WHERE Ticker = ?", (ticker,))
-        exists = cursor.fetchone()
+        try:
+            # 2. Robust Numeric Parsing (Handles empty strings and commas)
+            raw_qty = row.get('Quantity', '0').strip()
+            shares = float(raw_qty) if raw_qty and raw_qty != '--' else 0.0
+            
+            # 3. Correct Column Name Mapping ('Average Cost Basis')
+            raw_cost = row.get('Average Cost Basis', '0').replace('$', '').replace(',', '').strip()
+            purchase_price = float(raw_cost) if raw_cost and raw_cost != '--' and raw_cost != 'n/a' else 0.0
+            logging.info(f"Processing {ticker} - Shares: {shares}, Purchase Price: {purchase_price}")
+
+            # Perform the UPSERT (Check if ticker exists)
+            cursor.execute("SELECT Ticker FROM Portfolio WHERE Ticker = ?", (ticker,))
+            exists = cursor.fetchone()
+            
+            if exists:
+                cursor.execute("""
+                    UPDATE Portfolio 
+                    SET Shares = ?, PurchasePrice = ?, LastUpdated = NULL 
+                    WHERE Ticker = ?
+                """, (shares, purchase_price, ticker))
+            else:
+                cursor.execute("""
+                    INSERT INTO Portfolio (Ticker, Shares, PurchasePrice, LastUpdated) 
+                    VALUES (?, ?, ?, NULL)
+                """, (ticker, shares, purchase_price))
+            
+            count += 1
+        except Exception as e:
+                logging.error(f"Failed to process row for {ticker}: {e}")
+                continue # Skip this row and keep going instead of crashing
         
-        if exists:
-            cursor.execute("""
-                UPDATE Portfolio 
-                SET Shares = ?, PurchasePrice = ?, LastUpdated = NULL 
-                WHERE Ticker = ?
-            """, (shares, purchase_price, ticker))
-        else:
-            cursor.execute("""
-                INSERT INTO Portfolio (Ticker, Shares, PurchasePrice, LastUpdated) 
-                VALUES (?, ?, ?, NULL)
-            """, (ticker, shares, purchase_price))
-        
-        count += 1
-    
     conn.commit()
     return count
 
@@ -207,7 +213,7 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                     file.stream.seek(0)  # Reset stream position after reading for logging
                     file_content = file.stream.read()
                     logging.info(f"File content read successfully, size: {len(file_content)} bytes")
-                    
+
                     num_processed = process_fidelity_csv(file_content, cursor, conn)
                     logging.info(f"Processed {num_processed} assets from uploaded file.")
 
