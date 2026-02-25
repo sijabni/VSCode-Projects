@@ -99,11 +99,15 @@ def get_exhaustive_data(ticker):
 
     try:
         # 1. Handle Cash Pattern (The 'XX**' convention)
-        if re.search(r'[A-Z]{3}XX\*?$', ticker_upper):
+        if re.search(r'[A-Z]{3}XX[\*]*$', ticker_upper):
             # Cash usually doesn't need a trendline, but we return a flat one [1,1,1,1,1,1,1] 
             # so the frontend doesn't crash
             return 1.0, "Cash & Liquidity", [1.0] * 7
 
+        yf_ticker = ticker_upper.replace('*', '').replace('$', '')
+        if yf_ticker == "BRKB":
+            yf_ticker = "BRK-B"
+            
         stock = yf.Ticker(ticker)
         info = stock.info
         
