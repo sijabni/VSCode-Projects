@@ -67,7 +67,7 @@ def process_fidelity_csv(file_content, cursor, conn):
 def get_cached_or_live_data(ticker, cursor):
     # 1. Check if we have fresh data in the DB
     cursor.execute("""
-        SELECT TOP 1 PurchasePrice, category, CachedTrend, LastUpdated 
+        SELECT TOP 1 CurrentPrice, PurchasePrice, category, CachedTrend, LastUpdated 
         FROM Portfolio WHERE Ticker = ?
     """, (ticker,))
     row = cursor.fetchone()
@@ -98,8 +98,8 @@ def get_exhaustive_data(ticker):
     trend_data = []
 
     try:
-        # 1. Handle Cash Pattern (The 'XX' convention)
-        if re.search(r'[A-Z]{3}XX$', ticker_upper):
+        # 1. Handle Cash Pattern (The 'XX**' convention)
+        if re.search(r'[A-Z]{3}XX\*?$', ticker_upper):
             # Cash usually doesn't need a trendline, but we return a flat one [1,1,1,1,1,1,1] 
             # so the frontend doesn't crash
             return 1.0, "Cash & Liquidity", [1.0] * 7
@@ -174,7 +174,7 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
             
             # -- HANDLE GET: Retrieve Date and Price --
             if req.method == "GET":
-                cursor.execute("SELECT Ticker, Shares, category, PurchasePrice, PurchaseDate FROM Portfolio")
+                cursor.execute("SELECT Ticker, Shares, category, PurchasePrice, PurchaseDate, CurrentPrice FROM Portfolio")
                 rows = cursor.fetchall()
                 
                 portfolio_list = []
