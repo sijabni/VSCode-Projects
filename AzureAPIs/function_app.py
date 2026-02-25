@@ -25,21 +25,26 @@ def process_fidelity_csv(file_content, cursor, conn):
         ticker = row.get('Symbol', '').strip().upper()
         logging.info(f"Processing ticker: {ticker}")
         # QA Filter: Skip empty rows or the 'Total' footer row
-        if not ticker or ticker == 'TOTAL' or 'Pending' in ticker:
+        if not ticker or ticker == 'SYMBOL' or 'PENDING' in ticker:
             continue
 
         try:
             # 2. Robust Numeric Parsing (Handles empty strings and commas)
-            raw_qty = row.get('Quantity', '0').strip()
-            shares = float(raw_qty) if raw_qty and raw_qty != '--' else 0.0
-            
-            # 3. Correct Column Name Mapping ('Average Cost Basis')
+            raw_qty = row.get('Quantity', '').strip()
             raw_cost = row.get('Average Cost Basis', '0').replace('$', '').replace(',', '').strip()
-            purchase_price = float(raw_cost) if raw_cost and raw_cost != '--' and raw_cost != 'n/a' else 0.0
-            logging.info(f"Processing {ticker} - Shares: {shares}, Purchase Price: {purchase_price}")
             raw_last_price = row.get('Last Price', '0').replace('$', '').replace(',', '').strip()
-            csv_market_price = float(raw_last_price) if raw_last_price and raw_last_price != '--' else 0.0
-            
+            raw_value = row.get('Current Value', '0').replace('$', '').replace(',', '').strip()
+
+            if not raw_qty or raw_qty == '--' or ticker.endswith('XX'):
+                shares = float(raw_qty) if raw_qty and raw_qty != '--' else 0.0
+                purchase_price = float(raw_cost) if raw_cost and raw_cost != '--' and raw_cost != 'n/a' else 0.0
+                current_price = 1.0  # For cash, we treat it as $1 per unit
+            else:
+                shares = float(raw_qty.replace(',', ''))
+                purchase_price = float(raw_cost.replace('$', '').replace(',', '')) if raw_cost and raw_cost != '--' else 0.0
+                current_price = float(raw_last_price) if raw_last_price and raw_last_price != '--' else 0.0 
+                logging.info(f"Processing {ticker} - Shares: {shares}, Purchase Price: {purchase_price}")
+                       
             # Perform the UPSERT (Check if ticker exists)
             cursor.execute("SELECT Ticker FROM Portfolio WHERE Ticker = ?", (ticker,))
             exists = cursor.fetchone()
@@ -49,14 +54,16 @@ def process_fidelity_csv(file_content, cursor, conn):
                     UPDATE Portfolio 
                     SET Shares = ?, PurchasePrice = ?, CurrentPrice = ?, LastUpdated = NULL 
                     WHERE Ticker = ?
-                """, (shares, purchase_price, csv_market_price, ticker))
+                """, (shares, purchase_price, current_price, ticker))
             else:
                 cursor.execute("""
                     INSERT INTO Portfolio (Ticker, Shares, PurchasePrice, CurrentPrice, LastUpdated) 
                     VALUES (?, ?, ?, ?, NULL)
-                """, (ticker, shares, purchase_price, csv_market_price))
+                """, (ticker, shares, purchase_price, current_price))
             
             count += 1
+            logging.info(f"Processed {ticker}: {shares} shares")
+
         except Exception as e:
                 logging.error(f"Failed to process row for {ticker}: {e}")
                 continue # Skip this row and keep going instead of crashing
@@ -107,7 +114,7 @@ def get_exhaustive_data(ticker):
         yf_ticker = ticker_upper.replace('*', '').replace('$', '')
         if yf_ticker == "BRKB":
             yf_ticker = "BRK-B"
-            
+
         stock = yf.Ticker(ticker)
         info = stock.info
         
