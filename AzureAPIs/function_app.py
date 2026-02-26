@@ -16,34 +16,53 @@ import json
 
 def process_fidelity_csv(file_content, cursor, conn):
     # Convert bytes to string buffer
+    cursor.execute("SELECT FidelitySymbol, MarketSymbol FROM SymbolMapping")
+    mappings = {row[0]: row[1] for row in cursor.fetchall()}
+    
     stream = io.StringIO(file_content.decode('utf-8-sig'))  # Handle potential BOM
     reader = csv.DictReader(stream)
 
     count = 0
     for row in reader:
-        raw_ticker = row.get('Symbol', '')
-        ticker = row.get('Symbol', '').strip().upper()
-        logging.info(f"Processing ticker: {ticker}")
+        #raw_ticker = row.get('Symbol', '')
+        #ticker = row.get('Symbol', '').strip().upper()
+        #logging.info(f"Processing ticker: {ticker}")
         # QA Filter: Skip empty rows or the 'Total' footer row
+
+        # CLEANING: Remove stars and dollar signs from the ticker
+        raw_sym = row.get('Symbol', '').replace('*', '').replace('$', '').strip().upper()
+        
+        # MAPPING: Check if this symbol needs a market-friendly translation (e.g., BRKB -> BRK-B)
+        ticker = mappings.get(raw_sym, raw_sym)
         if not ticker or ticker == 'SYMBOL' or 'PENDING' in ticker:
             continue
 
         try:
             # 2. Robust Numeric Parsing (Handles empty strings and commas)
             raw_qty = row.get('Quantity', '').strip()
-            raw_cost = row.get('Average Cost Basis', '0').replace('$', '').replace(',', '').strip()
+            raw_cost = row.get('Average Cost Basis', '0').strip()
             raw_last_price = row.get('Last Price', '0').replace('$', '').replace(',', '').strip()
             raw_value = row.get('Current Value', '0').replace('$', '').replace(',', '').strip()
 
+            #if not raw_qty or raw_qty == '--' or ticker.endswith('XX'):
+            #    shares = float(raw_qty) if raw_qty and raw_qty != '--' else 0.0
+            #    purchase_price = float(raw_cost) if raw_cost and raw_cost != '--' and raw_cost != 'n/a' else 0.0
+            #    current_price = 1.0  # For cash, we treat it as $1 per unit
+            #else:
+            #    shares = float(raw_qty.replace(',', ''))
+            #    purchase_price = float(raw_cost.replace('$', '').replace(',', '')) if raw_cost and raw_cost != '--' else 0.0
+            #    current_price = float(raw_last_price) if raw_last_price and raw_last_price != '--' else 0.0 
+            #    logging.info(f"Processing {ticker} - Shares: {shares}, Purchase Price: {purchase_price}")
+
             if not raw_qty or raw_qty == '--' or ticker.endswith('XX'):
-                shares = float(raw_qty) if raw_qty and raw_qty != '--' else 0.0
-                purchase_price = float(raw_cost) if raw_cost and raw_cost != '--' and raw_cost != 'n/a' else 0.0
-                current_price = 1.0  # For cash, we treat it as $1 per unit
+                # 1 Share = $1.00. Current Value IS the share count.
+                shares = float(raw_value) if raw_value else 0.0
+                purchase_price = 1.0
+                current_price = 1.0
             else:
                 shares = float(raw_qty.replace(',', ''))
                 purchase_price = float(raw_cost.replace('$', '').replace(',', '')) if raw_cost and raw_cost != '--' else 0.0
-                current_price = float(raw_last_price) if raw_last_price and raw_last_price != '--' else 0.0 
-                logging.info(f"Processing {ticker} - Shares: {shares}, Purchase Price: {purchase_price}")
+                current_price = float(raw_last_price) if raw_last_price and raw_last_price != '--' else 0.0  
                        
             # Perform the UPSERT (Check if ticker exists)
             cursor.execute("SELECT Ticker FROM Portfolio WHERE Ticker = ?", (ticker,))
@@ -99,59 +118,62 @@ def get_cached_or_live_data(ticker, cursor):
 
 def get_exhaustive_data(ticker):
     """Fetches price and categorizes asset dynamically using yfinance and patterns."""
-    ticker_upper = ticker.upper()
+    # 1. Standardize and Clean the Ticker immediately
+    clean_ticker = ticker.replace('*', '').replace('$', '').strip().upper()
+    
     current_price = 0.0
     category = "Other/Miscellaneous"
     trend_data = []
 
     try:
-        # 1. Handle Cash Pattern (The 'XX**' convention)
-        if re.search(r'[A-Z]{3}XX[\*]*$', ticker_upper):
-            # Cash usually doesn't need a trendline, but we return a flat one [1,1,1,1,1,1,1] 
-            # so the frontend doesn't crash
+        # 2. Handle Cash Pattern (FDRXX, etc.)
+        # We check the CLEANED ticker so we don't need complex regex for stars
+        if re.search(r'[A-Z]{3}XX$', clean_ticker):
             return 1.0, "Cash & Liquidity", [1.0] * 7
 
-        yf_ticker = ticker_upper.replace('*', '').replace('$', '')
+        # 3. Market Symbol Mapping (Discrepancy Fixes)
+        yf_ticker = clean_ticker
         if yf_ticker == "BRKB":
             yf_ticker = "BRK-B"
+        # Add others here as needed: if yf_ticker == "BFB": yf_ticker = "BF-B"
 
-        stock = yf.Ticker(ticker)
+        # 4. Use the CLEAN yf_ticker for the market engine
+        stock = yf.Ticker(yf_ticker)
         info = stock.info
         
-        # 2. Fetch Trend Data (7 days)
+        # 5. Fetch Trend Data (7 days)
         hist = stock.history(period="7d", interval="1d")
         trend_data = hist['Close'].fillna(0).tolist() if not hist.empty else []
 
-        # 3. Determine Price
+        # 6. Determine Current Market Price
         current_price = info.get("currentPrice", info.get("navPrice", 0.0))
         if current_price == 0 and trend_data:
             current_price = trend_data[-1]
 
-        # 4. Categorization Logic
+        # 7. Categorization Logic
         cash_equivalents = ['BIL', 'SGOV', 'CLIP', 'SHV', 'VGSH']
-        is_cash_etf = ticker_upper in cash_equivalents
         
-        if info.get("quoteType") == "ETF":
-            if is_cash_etf:
-                category = "Cash & Liquidity"
-            elif "International" in info.get("longName", ""):
+        if yf_ticker in cash_equivalents:
+            category = "Cash & Liquidity"
+        elif info.get("quoteType") == "ETF":
+            if "International" in info.get("longName", ""):
                 category = "International Equity"
             else:
                 category = "Equity ETFs"
         else:
-            sector = info.get("sector")
-            if sector:
-                if sector in ["Technology", "Communication Services"]:
-                    category = "Growth/Tech" 
-                else:
-                    category = sector
+            sector = info.get("sector", "Other")
+            if sector in ["Technology", "Communication Services"]:
+                category = "Growth/Tech" 
+            else:
+                category = sector
 
-        # THE FIX: Always return all three values
         return current_price, category, trend_data
     
     except Exception as e:
         logging.error(f"Error fetching {ticker}: {str(e)}")
+        # Return 0.0 so the dashboard shows something, but logs the error
         return 0.0, "Other", []
+    
     
 def get_current_price(ticker):
     try:
