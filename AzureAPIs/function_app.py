@@ -15,15 +15,18 @@ SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "your_default_secret_key")  # In p
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 conn_str = os.environ.get("AzureSqlConnectionString")
-if not conn_str:
+conns = None
+if conn_str:
     func.HttpResponse("Connection string missing.", status_code=500)
-try:
-    conn = pyodbc.connect(conn_str)
-    # This keeps the connection "hot" for all functions below
-    logging.info("Global SQL Connection established.")
-except Exception as e:
-    logging.error(f"Failed to connect to SQL: {e}")
-    conn = None
+    try:
+        conns = pyodbc.connect(conn_str)
+        # This keeps the connection "hot" for all functions below
+        logging.info("Global SQL Connection established.")
+    except Exception as e:
+        logging.error(f"Failed to connect to SQL: {e}")
+        conns = None
+else:
+    logging.error("AzureSqlConnectionString is missing from environment variables.")
 
 def hash_password(password):
     # Salt adds randomness so two "password123" results in different hashes
@@ -51,9 +54,6 @@ def verify_token(req):
         return decoded['username']
     except:
         return None
-
-
-
 
 def process_fidelity_csv(file_content, cursor, conn):
     # Convert bytes to string buffer
