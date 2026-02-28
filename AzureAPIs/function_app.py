@@ -8,11 +8,52 @@ import re
 import datetime
 import csv
 import io
+import bcrypt
+import jwt
+
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "your_default_secret_key")  # In production, ensure this is set securely in your environment variables    
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+conn_str = os.environ.get("AzureSqlConnectionString")
+if not conn_str:
+    func.HttpResponse("Connection string missing.", status_code=500)
+try:
+    conn = pyodbc.connect(conn_str)
+    # This keeps the connection "hot" for all functions below
+    logging.info("Global SQL Connection established.")
+except Exception as e:
+    logging.error(f"Failed to connect to SQL: {e}")
+    conn = None
 
-import datetime
-import json
+def hash_password(password):
+    # Salt adds randomness so two "password123" results in different hashes
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
+
+def verify_password(password, hashed_password):
+    return bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
+
+def generate_token(username):
+    payload = {
+        'username': username,
+        'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24) # Token expires in 1 day
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm='HS256')
+
+def verify_token(req):
+    auth_header = req.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return None
+    
+    token = auth_header.split(" ")[1]
+    try:
+        decoded = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        return decoded['username']
+    except:
+        return None
+
+
+
 
 def process_fidelity_csv(file_content, cursor, conn):
     # Convert bytes to string buffer
@@ -174,20 +215,69 @@ def get_exhaustive_data(ticker):
         # Return 0.0 so the dashboard shows something, but logs the error
         return 0.0, "Other", []
     
-    
-def get_current_price(ticker):
+#def get_current_price(ticker):
+#    try:
+#        stock = yf.Ticker(ticker)
+#        current_price = stock.info.get("currentPrice", 0.0)
+#        return current_price
+#    except Exception as e:
+#        logging.error(f"Error fetching price for {ticker}: {str(e)}")
+#        return 0.0
+
+@app.route(route="login", methods=["POST"])
+def login(req: func.HttpRequest) -> func.HttpResponse:
     try:
-        stock = yf.Ticker(ticker)
-        # Use fast_info or info; fast_info is quicker for basic data
-        current_price = stock.info.get("currentPrice", 0.0)
-        return current_price
+        # 1. Parse the incoming JSON
+        req_body = req.get_json()
+        username = req_body.get('username')
+        password = req_body.get('password')
+
+        if not username or not password:
+            return func.HttpResponse("Missing username or password", status_code=400)
+
+        # 2. Check the database
+        try:
+            with pyodbc.connect(conn_str) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT UserID, PasswordHash FROM Users WHERE Username = ?", (username,))
+                row = cursor.fetchone()
+        except Exception as db_err:
+            logging.error(f"Database error during login: {db_err}")
+            return func.HttpResponse("Database connection error", status_code=500)
+
+        if row:
+            user_id = row[0]
+            stored_hash = row[1]
+            
+            # 3. Verify the password
+            if bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
+                # 4. Generate the JWT Token
+                token = jwt.encode({
+                    'user_id': user_id,
+                    'username': username,
+                    'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+                }, SECRET_KEY, algorithm='HS256')
+
+                return func.HttpResponse(
+                    json.dumps({"token": token, "username": username}),
+                    mimetype="application/json",
+                    status_code=200
+                )
+
+        return func.HttpResponse("Invalid credentials", status_code=401)
+
     except Exception as e:
-        logging.error(f"Error fetching price for {ticker}: {str(e)}")
-        return 0.0
+        logging.error(f"General login error: {e}")
+        return func.HttpResponse(f"Error: {str(e)}", status_code=500)
     
 @app.route(route="get_portfolio", methods=["GET","POST","PUT","DELETE"])
 def get_assets(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info(f"Processing {req.method} request...") 
+    
+    username = verify_token(req)
+    if not username:
+        return func.HttpResponse("Unauthorized", status_code=401)
+    
+    logging.info(f"Processing {req.method} request for user: {username}")
 
     # 1. Parse JSON safely
     try:
