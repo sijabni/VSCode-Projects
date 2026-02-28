@@ -5,3 +5,5 @@
 azure-functions
 pyodbc
 yfinance    
+bcrypt
+pyjwt
