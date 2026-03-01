@@ -232,6 +232,8 @@ def login(req: func.HttpRequest) -> func.HttpResponse:
         username = req_body.get('user')
         password = req_body.get('pass')
 
+        logging.info(f"Login attempt for user: {username}") 
+        
         if not username or not password:
             return func.HttpResponse("Missing username or password", status_code=400)
 
