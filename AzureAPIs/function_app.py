@@ -57,7 +57,7 @@ def verify_token(req):
     except:
         return None
 
-def process_fidelity_csv(file_content, cursor, conn):
+def process_fidelity_csv(file_content, cursor, conn, current_user_id):
     # Convert bytes to string buffer
     cursor.execute("SELECT FidelitySymbol, MarketSymbol FROM SymbolMapping")
     mappings = {row[0]: row[1] for row in cursor.fetchall()}
@@ -74,28 +74,24 @@ def process_fidelity_csv(file_content, cursor, conn):
 
         # CLEANING: Remove stars and dollar signs from the ticker
         raw_sym = row.get('Symbol', '').replace('*', '').replace('$', '').strip().upper()
-        
+
+        # Skip footer/disclaimer rows (if Symbol is empty or too long)
+        if not raw_sym or len(raw_sym) > 10 or 'DATE' in raw_sym:
+            continue
+
         # MAPPING: Check if this symbol needs a market-friendly translation (e.g., BRKB -> BRK-B)
         ticker = mappings.get(raw_sym, raw_sym)
         if not ticker or ticker == 'SYMBOL' or 'PENDING' in ticker:
             continue
 
         try:
+            
             # 2. Robust Numeric Parsing (Handles empty strings and commas)
+            
             raw_qty = row.get('Quantity', '').strip()
             raw_cost = row.get('Average Cost Basis', '0').strip()
             raw_last_price = row.get('Last Price', '0').replace('$', '').replace(',', '').strip()
             raw_value = row.get('Current Value', '0').replace('$', '').replace(',', '').strip()
-
-            #if not raw_qty or raw_qty == '--' or ticker.endswith('XX'):
-            #    shares = float(raw_qty) if raw_qty and raw_qty != '--' else 0.0
-            #    purchase_price = float(raw_cost) if raw_cost and raw_cost != '--' and raw_cost != 'n/a' else 0.0
-            #    current_price = 1.0  # For cash, we treat it as $1 per unit
-            #else:
-            #    shares = float(raw_qty.replace(',', ''))
-            #    purchase_price = float(raw_cost.replace('$', '').replace(',', '')) if raw_cost and raw_cost != '--' else 0.0
-            #    current_price = float(raw_last_price) if raw_last_price and raw_last_price != '--' else 0.0 
-            #    logging.info(f"Processing {ticker} - Shares: {shares}, Purchase Price: {purchase_price}")
 
             if not raw_qty or raw_qty == '--' or ticker.endswith('XX'):
                 # 1 Share = $1.00. Current Value IS the share count.
@@ -108,23 +104,23 @@ def process_fidelity_csv(file_content, cursor, conn):
                 current_price = float(raw_last_price) if raw_last_price and raw_last_price != '--' else 0.0  
                        
             # Perform the UPSERT (Check if ticker exists)
-            cursor.execute("SELECT Ticker FROM Portfolio WHERE Ticker = ?", (ticker,))
+            cursor.execute("SELECT Ticker FROM Portfolio WHERE Ticker = ? AND UserID = ?", (ticker, current_user_id))
             exists = cursor.fetchone()
             
             if exists:
                 cursor.execute("""
                     UPDATE Portfolio 
                     SET Shares = ?, PurchasePrice = ?, CurrentPrice = ?, LastUpdated = NULL 
-                    WHERE Ticker = ?
-                """, (shares, purchase_price, current_price, ticker))
+                    WHERE Ticker = ? AND UserID = ?
+                """, (shares, purchase_price, current_price, ticker, current_user_id))
             else:
                 cursor.execute("""
-                    INSERT INTO Portfolio (Ticker, Shares, PurchasePrice, CurrentPrice, LastUpdated) 
-                    VALUES (?, ?, ?, ?, NULL)
-                """, (ticker, shares, purchase_price, current_price))
+                    INSERT INTO Portfolio (Ticker, Shares, PurchasePrice, CurrentPrice, UserId, LastUpdated) 
+                    VALUES (?, ?, ?, ?, ?, NULL)
+                """, (ticker, shares, purchase_price, current_price, current_user_id))
             
             count += 1
-            logging.info(f"Processed {ticker}: {shares} shares")
+            logging.info(f"Processed {ticker} for user {current_user_id}")
 
         except Exception as e:
                 logging.error(f"Failed to process row for {ticker}: {e}")
@@ -217,14 +213,42 @@ def get_exhaustive_data(ticker):
         # Return 0.0 so the dashboard shows something, but logs the error
         return 0.0, "Other", []
     
-#def get_current_price(ticker):
-#    try:
-#        stock = yf.Ticker(ticker)
-#        current_price = stock.info.get("currentPrice", 0.0)
-#        return current_price
-#    except Exception as e:
-#        logging.error(f"Error fetching price for {ticker}: {str(e)}")
-#        return 0.0
+@app.route(route="register", methods=["POST"])
+def register(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        req_body = req.get_json()
+    except ValueError:
+        return func.HttpResponse("Invalid JSON", status_code=400)
+
+    username = req_body.get('username')
+    password = req_body.get('password')
+
+    if not username or not password:
+        return func.HttpResponse("Username and password required", status_code=400)
+
+    # 1. Hash the password using the same method as your login
+    # We use gensalt() to ensure every user has a unique, secure hash
+    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+    conn_str = os.environ.get("AzureSqlConnectionString")
+    
+    try:
+        with pyodbc.connect(conn_str) as conn:
+            cursor = conn.cursor()
+            
+            # 2. QA Check: Does this user already exist?
+            cursor.execute("SELECT UserID FROM Users WHERE Username = ?", (username,))
+            if cursor.fetchone():
+                return func.HttpResponse("Username already exists", status_code=409)
+
+            # 3. Insert the new user into the database
+            cursor.execute("INSERT INTO Users (Username, PasswordHash) VALUES (?, ?)", 
+                           (username, hashed_password))
+            conn.commit()
+            
+        return func.HttpResponse("User created successfully", status_code=201)
+    except Exception as e:
+        return func.HttpResponse(f"Database error: {str(e)}", status_code=500)
 
 @app.route(route="login", methods=["POST"])
 def login(req: func.HttpRequest) -> func.HttpResponse:
@@ -365,7 +389,7 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
                     file_content = file.stream.read()
                     logging.info(f"File content read successfully, size: {len(file_content)} bytes")
 
-                    num_processed = process_fidelity_csv(file_content, cursor, conn)
+                    num_processed = process_fidelity_csv(file_content, cursor, conn, current_user_id)
                     logging.info(f"Processed {num_processed} assets from uploaded file.")
 
 
