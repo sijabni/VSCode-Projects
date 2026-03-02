@@ -1,5 +1,6 @@
 import os
 import logging
+from unittest import result
 import azure.functions as func
 import json
 import pyodbc
@@ -36,8 +37,9 @@ def hash_password(password):
 def verify_password(password, hashed_password):
     return bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
 
-def generate_token(username):
+def generate_token(user_id,username):
     payload = {
+        'user_id': user_id,
         'username': username,
         'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24) # Token expires in 1 day
     }
@@ -51,7 +53,7 @@ def verify_token(req):
     token = auth_header.split(" ")[1]
     try:
         decoded = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
-        return decoded['username']
+        return decoded
     except:
         return None
 
@@ -251,9 +253,20 @@ def login(req: func.HttpRequest) -> func.HttpResponse:
             user_id = row[0]
             stored_hash = row[1]
             
+            logging.info(f"Checking pass for user: {username}")
+            logging.info(f"Input pass (encoded): {password.encode('utf-8')}")
+            logging.info(f"Stored hash from DB: {row[1]}")
+            
+            # Try this more robust comparison:
+            stored_hash_bytes = row[1].strip().encode('utf-8')
+            result = bcrypt.checkpw(password.encode('utf-8'), stored_hash_bytes)
+            logging.info(f"Final Check Result: {result}")
+
             # 3. Verify the password
-            if bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
+            #if bcrypt.checkpw(password.encode('utf-8'), row[1].strip().encode('utf-8')):
+            #if bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
                 # 4. Generate the JWT Token
+            if bcrypt.checkpw(password.encode('utf-8'), stored_hash_bytes):
                 token = jwt.encode({
                     'user_id': user_id,
                     'username': username,
@@ -280,6 +293,7 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse("Unauthorized", status_code=401)
     
     logging.info(f"Processing {req.method} request for user: {username}")
+    current_user_id = username.get("user_id")  # Assuming the token contains user_id, adjust if your token structure is different
 
     # 1. Parse JSON safely
     try:
@@ -291,7 +305,7 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
     conn_str = os.environ.get("AzureSqlConnectionString")
     if not conn_str:
         return func.HttpResponse("Connection string missing.", status_code=500)
-
+    
     conn = None
     try:
         with pyodbc.connect(conn_str) as conn:
@@ -299,7 +313,7 @@ def get_assets(req: func.HttpRequest) -> func.HttpResponse:
             
             # -- HANDLE GET: Retrieve Date and Price --
             if req.method == "GET":
-                cursor.execute("SELECT Ticker, Shares, category, PurchasePrice, PurchaseDate, CurrentPrice FROM Portfolio")
+                cursor.execute("SELECT Ticker, Shares, category, PurchasePrice, PurchaseDate, CurrentPrice FROM Portfolio WHERE UserID = ?", (current_user_id,))
                 rows = cursor.fetchall()
                 
                 portfolio_list = []
