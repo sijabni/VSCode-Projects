@@ -242,11 +242,28 @@ def register(req: func.HttpRequest) -> func.HttpResponse:
                 return func.HttpResponse("Username already exists", status_code=409)
 
             # 3. Insert the new user into the database
-            cursor.execute("INSERT INTO Users (Username, PasswordHash) VALUES (?, ?)", 
-                           (username, hashed_password))
-            conn.commit()
+            sql = """
+                INSERT INTO Users (Username, PasswordHash) 
+                OUTPUT INSERTED.UserID 
+                VALUES (?, ?)
+            """
+            cursor.execute(sql, (username, hashed_password))
+            result = cursor.fetchone()
+            if result:
+                new_user_id = result[0]
+            else:
+                raise Exception("Failed to retrieve new UserID")
             
-        return func.HttpResponse("User created successfully", status_code=201)
+            conn.commit()
+            # Generate a token for the new user immediately
+            
+            token = jwt.encode({
+                'user_id': new_user_id,
+                'username': username,
+                'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+            }, SECRET_KEY, algorithm='HS256')
+            
+        return func.HttpResponse(json.dumps({"token": token, "username": username}), mimetype="application/json", status_code=201)
     except Exception as e:
         return func.HttpResponse(f"Database error: {str(e)}", status_code=500)
 
